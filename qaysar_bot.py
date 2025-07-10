@@ -1,4 +1,7 @@
 import logging
+import os
+import sqlite3
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Updater,
@@ -9,8 +12,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler
 )
-import sqlite3
-from datetime import datetime
 
 # تكوين السجل
 logging.basicConfig(
@@ -19,11 +20,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# بيانات البوت
-TOKEN = '7902496433:AAHySiP8qLbqwXYG6KPffZ3BqHT2wi9uLqU'
-ADMIN_ID = 5945190100
-CHANNEL_USERNAME = '@qaysarjo'
-CHANNEL_LINK = 'https://t.me/qaysarjo'
+# تهيئة مجلد البيانات
+if not os.path.exists('data'):
+    os.makedirs('data')
+
+# اتصال قاعدة البيانات
+DB_PATH = os.path.join('data', 'qaysar_bot.db')
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
 
 # حالات المحادثة
 (
@@ -36,12 +40,8 @@ CHANNEL_LINK = 'https://t.me/qaysarjo'
     ADMIN_ADD_ADMIN, ADMIN_VIEW_USERS, ADMIN_TRANSFER_BALANCE
 ) = range(21)
 
-# اتصال قاعدة البيانات
-conn = sqlite3.connect('qaysar_bot.db', check_same_thread=False)
-cursor = conn.cursor()
-
+# تهيئة قاعدة البيانات
 def init_db():
-    """تهيئة قاعدة البيانات"""
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -119,6 +119,7 @@ def init_db():
     )''')
 
     # إضافة الأدمن الرئيسي إذا لم يكن موجودًا
+    ADMIN_ID = int(os.environ.get('ADMIN_ID', 5945190100))
     cursor.execute('SELECT * FROM admins WHERE admin_id = ?', (ADMIN_ID,))
     if not cursor.fetchone():
         cursor.execute('''
@@ -130,8 +131,10 @@ def init_db():
 
 init_db()
 
+# ============= وظائف المساعدة =============
 def is_user_member(update: Update, context: CallbackContext, user_id: int):
     """التحقق من اشتراك المستخدم في القناة"""
+    CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@qaysarjo')
     try:
         member = context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ['member', 'administrator', 'creator']
@@ -140,12 +143,10 @@ def is_user_member(update: Update, context: CallbackContext, user_id: int):
         return False
 
 def get_user_info(user_id: int):
-    """الحصول على معلومات المستخدم"""
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
     return cursor.fetchone()
 
 def register_user(update: Update):
-    """تسجيل مستخدم جديد"""
     user = update.effective_user
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user.id,))
     if not cursor.fetchone():
@@ -157,37 +158,30 @@ def register_user(update: Update):
         conn.commit()
 
 def get_categories():
-    """الحصول على جميع الأقسام"""
     cursor.execute('SELECT * FROM categories')
     return cursor.fetchall()
 
 def get_category_games(category_id: int):
-    """الحصول على ألعاب/تطبيقات قسم معين"""
     cursor.execute('SELECT * FROM games WHERE category_id = ?', (category_id,))
     return cursor.fetchall()
 
 def get_game_products(game_id: int):
-    """الحصول على منتجات لعبة/تطبيق معين"""
     cursor.execute('SELECT * FROM products WHERE game_id = ?', (game_id,))
     return cursor.fetchall()
 
 def get_product(product_id: int):
-    """الحصول على معلومات منتج"""
     cursor.execute('SELECT * FROM products WHERE product_id = ?', (product_id,))
     return cursor.fetchone()
 
 def get_payment_methods():
-    """الحصول على طرق الدفع"""
     cursor.execute('SELECT * FROM payment_methods')
     return cursor.fetchall()
 
 def get_payment_method(method_id: int):
-    """الحصول على طريقة دفع معينة"""
     cursor.execute('SELECT * FROM payment_methods WHERE method_id = ?', (method_id,))
     return cursor.fetchone()
 
 def get_user_orders(user_id: int):
-    """الحصول على طلبات المستخدم"""
     cursor.execute('''
     SELECT o.order_id, p.name, p.price, o.player_id, o.status, o.order_date 
     FROM orders o
@@ -198,7 +192,6 @@ def get_user_orders(user_id: int):
     return cursor.fetchall()
 
 def get_pending_deposits():
-    """الحصول على طلبات الإيداع المعلقة"""
     cursor.execute('''
     SELECT d.deposit_id, u.user_id, u.username, d.amount, m.name, d.sender_name, d.deposit_date
     FROM deposits d
@@ -210,7 +203,6 @@ def get_pending_deposits():
     return cursor.fetchall()
 
 def get_pending_orders():
-    """الحصول على طلبات الشحن المعلقة"""
     cursor.execute('''
     SELECT o.order_id, u.user_id, u.username, c.name as category, g.name as game, 
            p.name as product, p.price, o.player_id, o.order_date
@@ -225,16 +217,16 @@ def get_pending_orders():
     return cursor.fetchall()
 
 def is_admin(user_id: int):
-    """التحقق من إذا كان المستخدم أدمن"""
     cursor.execute('SELECT * FROM admins WHERE admin_id = ?', (user_id,))
     return cursor.fetchone() is not None
 
+# ============= واجهة المستخدم =============
 def start(update: Update, context: CallbackContext):
-    """بدء المحادثة"""
     user = update.effective_user
     register_user(update)
     
     if not is_user_member(update, context, user.id):
+        CHANNEL_LINK = os.environ.get('CHANNEL_LINK', 'https://t.me/qaysarjo')
         keyboard = [[InlineKeyboardButton("اشترك في القناة", url=CHANNEL_LINK)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text(
@@ -251,7 +243,6 @@ def start(update: Update, context: CallbackContext):
     return SELECTING_ACTION
 
 def show_main_menu(update, message=None):
-    """عرض القائمة الرئيسية"""
     keyboard = [
         [KeyboardButton("شحن الألعاب 🎮"), KeyboardButton("شحن تطبيقات 📱")],
         [KeyboardButton("الإيداع 💳"), KeyboardButton("هل لديك مشكلة ❓")],
@@ -269,7 +260,6 @@ def show_main_menu(update, message=None):
         )
 
 def handle_main_commands(update: Update, context: CallbackContext):
-    """معالجة أوامر القائمة الرئيسية"""
     text = update.message.text
     
     if text == "شحن الألعاب 🎮":
@@ -287,7 +277,7 @@ def handle_main_commands(update: Update, context: CallbackContext):
     elif text == "هل لديك مشكلة ❓":
         update.message.reply_text(
             "إذا كنت بحاجة إلى مساعدة، يرجى التواصل مع مدير البوت:\n"
-            f"{CHANNEL_USERNAME}"
+            f"{os.environ.get('CHANNEL_USERNAME', '@qaysarjo')}"
         )
         return SELECTING_ACTION
         
@@ -296,7 +286,6 @@ def handle_main_commands(update: Update, context: CallbackContext):
         return SELECTING_ACTION
 
 def show_categories(update: Update, category_type: str):
-    """عرض الأقسام"""
     categories = get_categories()
     filtered_categories = [cat for cat in categories if category_type in cat[1]]
     
@@ -315,8 +304,7 @@ def show_categories(update: Update, category_type: str):
         reply_markup=reply_markup
     )
 
-def select_category(update: Update, context: CallbackContext, category_type: str):
-    """اختيار قسم"""
+def select_category(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
     category_id = int(query.data.split('_')[1])
@@ -325,7 +313,6 @@ def select_category(update: Update, context: CallbackContext, category_type: str
     return SELECTING_GAME
 
 def show_category_games(update: Update, context: CallbackContext, category_id: int):
-    """عرض الألعاب/التطبيقات في القسم"""
     games = get_category_games(category_id)
     
     if not games:
@@ -343,8 +330,7 @@ def show_category_games(update: Update, context: CallbackContext, category_id: i
         reply_markup=reply_markup
     )
 
-def select_game(update: Update, context: CallbackContext, game_type: str):
-    """اختيار لعبة/تطبيق"""
+def select_game(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
     game_id = int(query.data.split('_')[1])
@@ -353,7 +339,6 @@ def select_game(update: Update, context: CallbackContext, game_type: str):
     return SELECTING_PRODUCT
 
 def show_game_products(update: Update, context: CallbackContext, game_id: int):
-    """عرض منتجات اللعبة/التطبيق"""
     products = get_game_products(game_id)
     
     if not products:
@@ -372,7 +357,6 @@ def show_game_products(update: Update, context: CallbackContext, game_id: int):
     )
 
 def select_product(update: Update, context: CallbackContext):
-    """اختيار منتج"""
     query = update.callback_query
     query.answer()
     product_id = int(query.data.split('_')[1])
@@ -381,7 +365,6 @@ def select_product(update: Update, context: CallbackContext):
     return ENTERING_PLAYER_ID
 
 def show_product_details(update: Update, context: CallbackContext, product_id: int):
-    """عرض تفاصيل المنتج"""
     product = get_product(product_id)
     game = cursor.execute('SELECT * FROM games WHERE game_id = ?', (product[1],)).fetchone()
     category = cursor.execute('SELECT * FROM categories WHERE category_id = ?', (game[1],)).fetchone()
@@ -401,7 +384,6 @@ def show_product_details(update: Update, context: CallbackContext, product_id: i
     return ENTERING_PLAYER_ID
 
 def handle_player_id(update: Update, context: CallbackContext):
-    """معالجة معرف اللاعب"""
     player_id = update.message.text
     product_id = context.user_data['selected_product']
     product = get_product(product_id)
@@ -425,7 +407,6 @@ def handle_player_id(update: Update, context: CallbackContext):
     return CONFIRMING_PURCHASE
 
 def confirm_purchase(update: Update, context: CallbackContext):
-    """تأكيد عملية الشراء"""
     query = update.callback_query
     user_id = query.from_user.id
     product_id = context.user_data['selected_product']
@@ -434,8 +415,7 @@ def confirm_purchase(update: Update, context: CallbackContext):
     product = get_product(product_id)
     user = get_user_info(user_id)
     
-    if user[4] >= product[3]:  # إذا كان الرصيد كافي
-        # خصم المبلغ من رصيد المستخدم
+    if user[4] >= product[3]:
         new_balance = user[4] - product[3]
         total_spent = user[5] + product[3]
         
@@ -445,7 +425,6 @@ def confirm_purchase(update: Update, context: CallbackContext):
         WHERE user_id = ?
         ''', (new_balance, total_spent, user_id))
         
-        # تسجيل الطلب
         cursor.execute('''
         INSERT INTO orders (user_id, product_id, player_id, status, order_date)
         VALUES (?, ?, ?, ?, ?)
@@ -453,7 +432,6 @@ def confirm_purchase(update: Update, context: CallbackContext):
         
         conn.commit()
         
-        # إرسال رسالة التأكيد للمستخدم
         query.edit_message_text(
             f"✅ تم إرسال طلب الشحن بنجاح!\n\n"
             f"المنتج: {product[2]}\n"
@@ -463,7 +441,6 @@ def confirm_purchase(update: Update, context: CallbackContext):
             f"رصيدك الحالي: {new_balance} دينار أردني 🇯🇴"
         )
         
-        # إعلام الإداريين بوجود طلب جديد
         admins = cursor.execute('SELECT admin_id FROM admins').fetchall()
         for admin in admins:
             context.bot.send_message(
@@ -485,14 +462,12 @@ def confirm_purchase(update: Update, context: CallbackContext):
     return SELECTING_ACTION
 
 def cancel_purchase(update: Update, context: CallbackContext):
-    """إلغاء عملية الشراء"""
     query = update.callback_query
     query.edit_message_text("تم إلغاء الطلب.")
     show_main_menu(update, "اختر من القائمة أدناه:")
     return SELECTING_ACTION
 
 def show_payment_methods(update: Update):
-    """عرض طرق الدفع"""
     methods = get_payment_methods()
     
     if not methods:
@@ -511,7 +486,6 @@ def show_payment_methods(update: Update):
     )
 
 def select_payment_method(update: Update, context: CallbackContext):
-    """اختيار طريقة دفع"""
     query = update.callback_query
     query.answer()
     method_id = int(query.data.split('_')[1])
@@ -520,7 +494,6 @@ def select_payment_method(update: Update, context: CallbackContext):
     return ENTERING_DEPOSIT_AMOUNT
 
 def show_method_details(update: Update, context: CallbackContext, method_id: int):
-    """عرض تفاصيل طريقة الدفع"""
     method = get_payment_method(method_id)
     context.user_data['selected_method'] = method_id
     
@@ -535,7 +508,6 @@ def show_method_details(update: Update, context: CallbackContext, method_id: int
     )
 
 def ask_for_deposit_details(update: Update, context: CallbackContext):
-    """طلب تفاصيل الإيداع"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال المبلغ الذي قمت بتحويله (بالدينار الأردني):"
@@ -543,7 +515,6 @@ def ask_for_deposit_details(update: Update, context: CallbackContext):
     return ENTERING_DEPOSIT_AMOUNT
 
 def handle_deposit_amount(update: Update, context: CallbackContext):
-    """معالجة مبلغ الإيداع"""
     amount_text = update.message.text
     try:
         amount = float(amount_text)
@@ -560,13 +531,11 @@ def handle_deposit_amount(update: Update, context: CallbackContext):
     return ENTERING_DEPOSIT_NAME
 
 def handle_deposit_name(update: Update, context: CallbackContext):
-    """معالجة اسم المرسل"""
     sender_name = update.message.text
     user_id = update.effective_user.id
     method_id = context.user_data['selected_method']
     amount = context.user_data['deposit_amount']
     
-    # تسجيل طلب الإيداع
     cursor.execute('''
     INSERT INTO deposits (user_id, amount, method_id, sender_name, status, deposit_date)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -574,13 +543,11 @@ def handle_deposit_name(update: Update, context: CallbackContext):
     
     conn.commit()
     
-    # إعلام المستخدم
     update.message.reply_text(
         "✅ تم إرسال طلب الإيداع للتحقق اليدوي من قبل الإدارة.\n"
         "سيتم إعلامك عند الموافقة على الطلب."
     )
     
-    # إعلام الإداريين
     admins = cursor.execute('SELECT admin_id FROM admins').fetchall()
     user = get_user_info(user_id)
     method = get_payment_method(method_id)
@@ -598,7 +565,6 @@ def handle_deposit_name(update: Update, context: CallbackContext):
     return SELECTING_ACTION
 
 def show_user_info(update: Update):
-    """عرض معلومات المستخدم"""
     user_id = update.effective_user.id
     user = get_user_info(user_id)
     orders = get_user_orders(user_id)
@@ -617,7 +583,6 @@ def show_user_info(update: Update):
     update.message.reply_text(message)
 
 def show_admin_menu(update: Update, context: CallbackContext):
-    """عرض قائمة الإدارة"""
     keyboard = [
         [InlineKeyboardButton("إضافة أقسام", callback_data='add_category')],
         [InlineKeyboardButton("تعديل الأقسام", callback_data='edit_category')],
@@ -637,7 +602,6 @@ def show_admin_menu(update: Update, context: CallbackContext):
     )
 
 def admin_add_category(update: Update, context: CallbackContext):
-    """إضافة قسم جديد"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال اسم القسم الجديد:"
@@ -645,7 +609,6 @@ def admin_add_category(update: Update, context: CallbackContext):
     return ADMIN_ADD_CATEGORY
 
 def handle_category_name(update: Update, context: CallbackContext):
-    """معالجة اسم القسم"""
     category_name = update.message.text
     context.user_data['new_category_name'] = category_name
     
@@ -655,11 +618,9 @@ def handle_category_name(update: Update, context: CallbackContext):
     return ADMIN_ADD_CATEGORY
 
 def handle_category_description(update: Update, context: CallbackContext):
-    """معالجة وصف القسم"""
     category_name = context.user_data['new_category_name']
     description = update.message.text
     
-    # حفظ القسم في قاعدة البيانات
     cursor.execute('''
     INSERT INTO categories (name, description)
     VALUES (?, ?)
@@ -674,7 +635,6 @@ def handle_category_description(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_edit_category(update: Update, context: CallbackContext):
-    """تعديل الأقسام"""
     categories = get_categories()
     
     if not categories:
@@ -694,7 +654,6 @@ def admin_edit_category(update: Update, context: CallbackContext):
     )
 
 def admin_manage_category(update: Update, context: CallbackContext, category_id: int):
-    """إدارة القسم"""
     category = cursor.execute('SELECT * FROM categories WHERE category_id = ?', (category_id,)).fetchone()
     context.user_data['editing_category'] = category_id
     
@@ -715,7 +674,6 @@ def admin_manage_category(update: Update, context: CallbackContext, category_id:
     )
 
 def admin_edit_category_name(update: Update, context: CallbackContext):
-    """تعديل اسم القسم"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال الاسم الجديد للقسم:"
@@ -723,7 +681,6 @@ def admin_edit_category_name(update: Update, context: CallbackContext):
     return ADMIN_EDIT_CATEGORY
 
 def admin_save_category_name(update: Update, context: CallbackContext):
-    """حفظ اسم القسم الجديد"""
     new_name = update.message.text
     category_id = context.user_data['editing_category']
     
@@ -740,7 +697,6 @@ def admin_save_category_name(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_edit_category_desc(update: Update, context: CallbackContext):
-    """تعديل وصف القسم"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال الوصف الجديد للقسم:"
@@ -748,7 +704,6 @@ def admin_edit_category_desc(update: Update, context: CallbackContext):
     return ADMIN_EDIT_CATEGORY
 
 def admin_save_category_desc(update: Update, context: CallbackContext):
-    """حفظ وصف القسم الجديد"""
     new_desc = update.message.text
     category_id = context.user_data['editing_category']
     
@@ -765,7 +720,6 @@ def admin_save_category_desc(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_add_game(update: Update, context: CallbackContext):
-    """إضافة لعبة/تطبيق جديد"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال اسم اللعبة/التطبيق الجديد:"
@@ -773,7 +727,6 @@ def admin_add_game(update: Update, context: CallbackContext):
     return ADMIN_ADD_GAME
 
 def admin_save_game(update: Update, context: CallbackContext):
-    """حفظ اللعبة/التطبيق الجديد"""
     game_name = update.message.text
     category_id = context.user_data['editing_category']
     
@@ -791,7 +744,6 @@ def admin_save_game(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_view_category_games(update: Update, context: CallbackContext, category_id: int):
-    """عرض ألعاب/تطبيقات القسم"""
     games = get_category_games(category_id)
     
     if not games:
@@ -812,7 +764,6 @@ def admin_view_category_games(update: Update, context: CallbackContext, category
     )
 
 def admin_manage_game(update: Update, context: CallbackContext, game_id: int):
-    """إدارة لعبة/تطبيق"""
     game = cursor.execute('SELECT * FROM games WHERE game_id = ?', (game_id,)).fetchone()
     context.user_data['editing_game'] = game_id
     
@@ -834,7 +785,6 @@ def admin_manage_game(update: Update, context: CallbackContext, game_id: int):
     )
 
 def admin_add_product(update: Update, context: CallbackContext):
-    """إضافة منتج جديد"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال اسم المنتج الجديد:"
@@ -842,7 +792,6 @@ def admin_add_product(update: Update, context: CallbackContext):
     return ADMIN_ADD_PRODUCT
 
 def admin_save_product_name(update: Update, context: CallbackContext):
-    """حفظ اسم المنتج الجديد"""
     product_name = update.message.text
     context.user_data['new_product_name'] = product_name
     
@@ -852,7 +801,6 @@ def admin_save_product_name(update: Update, context: CallbackContext):
     return ADMIN_ADD_PRODUCT
 
 def admin_save_product_price(update: Update, context: CallbackContext):
-    """حفظ سعر المنتج الجديد"""
     price_text = update.message.text
     try:
         price = float(price_text)
@@ -879,7 +827,6 @@ def admin_save_product_price(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_view_game_products(update: Update, context: CallbackContext, game_id: int):
-    """عرض منتجات لعبة/تطبيق"""
     products = get_game_products(game_id)
     
     if not products:
@@ -899,7 +846,6 @@ def admin_view_game_products(update: Update, context: CallbackContext, game_id: 
     )
 
 def admin_add_payment_method(update: Update, context: CallbackContext):
-    """إضافة طريقة دفع جديدة"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال اسم طريقة الدفع الجديدة:"
@@ -907,7 +853,6 @@ def admin_add_payment_method(update: Update, context: CallbackContext):
     return ADMIN_ADD_PAYMENT_METHOD
 
 def admin_save_payment_method_name(update: Update, context: CallbackContext):
-    """حفظ اسم طريقة الدفع الجديدة"""
     method_name = update.message.text
     context.user_data['new_method_name'] = method_name
     
@@ -917,7 +862,6 @@ def admin_save_payment_method_name(update: Update, context: CallbackContext):
     return ADMIN_ADD_PAYMENT_METHOD
 
 def admin_save_payment_method_desc(update: Update, context: CallbackContext):
-    """حفظ وصف طريقة الدفع الجديدة"""
     method_name = context.user_data['new_method_name']
     description = update.message.text
     
@@ -935,7 +879,6 @@ def admin_save_payment_method_desc(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_manage_deposits(update: Update, context: CallbackContext):
-    """إدارة طلبات الإيداع"""
     deposits = get_pending_deposits()
     
     if not deposits:
@@ -953,7 +896,6 @@ def admin_manage_deposits(update: Update, context: CallbackContext):
     )
 
 def admin_view_deposit_requests(update: Update, context: CallbackContext):
-    """عرض طلبات الإيداع"""
     deposits = get_pending_deposits()
     
     for i, deposit in enumerate(deposits, 1):
@@ -984,7 +926,6 @@ def admin_view_deposit_requests(update: Update, context: CallbackContext):
     )
 
 def admin_handle_deposit_decision(update: Update, context: CallbackContext, deposit_id: int, decision: str):
-    """معالجة قرار الإيداع"""
     deposit = cursor.execute('''
     SELECT d.*, u.user_id, u.username, u.balance
     FROM deposits d
@@ -993,7 +934,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
     ''', (deposit_id,)).fetchone()
     
     if decision == 'accept':
-        # تحديث رصيد المستخدم
         new_balance = deposit[8] + deposit[2]
         cursor.execute('''
         UPDATE users
@@ -1001,7 +941,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
         WHERE user_id = ?
         ''', (new_balance, deposit[6]))
         
-        # تحديث حالة الإيداع
         cursor.execute('''
         UPDATE deposits
         SET status = 'completed'
@@ -1010,7 +949,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
         
         conn.commit()
         
-        # إعلام المستخدم
         context.bot.send_message(
             deposit[6],
             f"✅ تم قبول طلب الإيداع الخاص بك!\n\n"
@@ -1023,7 +961,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
             f"تم قبول طلب الإيداع وقامت بإضافة {deposit[2]} دينار أردني إلى رصيد المستخدم @{deposit[7]}"
         )
     else:
-        # تحديث حالة الإيداع
         cursor.execute('''
         UPDATE deposits
         SET status = 'rejected'
@@ -1032,7 +969,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
         
         conn.commit()
         
-        # إعلام المستخدم
         context.bot.send_message(
             deposit[6],
             f"❌ تم رفض طلب الإيداع الخاص بك!\n\n"
@@ -1046,7 +982,6 @@ def admin_handle_deposit_decision(update: Update, context: CallbackContext, depo
         )
 
 def admin_manage_orders(update: Update, context: CallbackContext):
-    """إدارة طلبات الشحن"""
     orders = get_pending_orders()
     
     if not orders:
@@ -1064,7 +999,6 @@ def admin_manage_orders(update: Update, context: CallbackContext):
     )
 
 def admin_view_order_requests(update: Update, context: CallbackContext):
-    """عرض طلبات الشحن"""
     orders = get_pending_orders()
     
     for i, order in enumerate(orders, 1):
@@ -1096,7 +1030,6 @@ def admin_view_order_requests(update: Update, context: CallbackContext):
     )
 
 def admin_handle_order_decision(update: Update, context: CallbackContext, order_id: int, decision: str):
-    """معالجة قرار الشحن"""
     order = cursor.execute('''
     SELECT o.*, u.user_id, u.username, u.balance, p.name, p.price
     FROM orders o
@@ -1106,7 +1039,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
     ''', (order_id,)).fetchone()
     
     if decision == 'accept':
-        # تحديث حالة الطلب
         cursor.execute('''
         UPDATE orders
         SET status = 'completed'
@@ -1115,7 +1047,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
         
         conn.commit()
         
-        # إعلام المستخدم
         context.bot.send_message(
             order[7],
             f"✅ تم شحن طلبك بنجاح!\n\n"
@@ -1129,7 +1060,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
             f"تم قبول طلب الشحن للمستخدم @{order[8]}"
         )
     else:
-        # استعادة الرصيد للمستخدم
         new_balance = order[9] + order[12]
         cursor.execute('''
         UPDATE users
@@ -1137,7 +1067,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
         WHERE user_id = ?
         ''', (new_balance, order[12], order[7]))
         
-        # تحديث حالة الطلب
         cursor.execute('''
         UPDATE orders
         SET status = 'rejected'
@@ -1146,7 +1075,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
         
         conn.commit()
         
-        # إعلام المستخدم
         context.bot.send_message(
             order[7],
             f"❌ تم رفض طلب الشحن الخاص بك!\n\n"
@@ -1161,7 +1089,6 @@ def admin_handle_order_decision(update: Update, context: CallbackContext, order_
         )
 
 def admin_transfer_balance(update: Update, context: CallbackContext):
-    """تحويل رصيد"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال معرف المستلم (user ID):"
@@ -1169,7 +1096,6 @@ def admin_transfer_balance(update: Update, context: CallbackContext):
     return ADMIN_TRANSFER_BALANCE
 
 def admin_handle_transfer_user(update: Update, context: CallbackContext):
-    """معالجة معرف المستلم"""
     user_id_text = update.message.text
     try:
         user_id = int(user_id_text)
@@ -1192,7 +1118,6 @@ def admin_handle_transfer_user(update: Update, context: CallbackContext):
     return ADMIN_TRANSFER_BALANCE
 
 def admin_handle_transfer_amount(update: Update, context: CallbackContext):
-    """معالجة مبلغ التحويل"""
     amount_text = update.message.text
     try:
         amount = float(amount_text)
@@ -1205,7 +1130,6 @@ def admin_handle_transfer_amount(update: Update, context: CallbackContext):
     user_id = context.user_data['transfer_user_id']
     username = context.user_data['transfer_username']
     
-    # تحديث رصيد المستخدم
     user = get_user_info(user_id)
     new_balance = user[4] + amount
     
@@ -1217,7 +1141,6 @@ def admin_handle_transfer_amount(update: Update, context: CallbackContext):
     
     conn.commit()
     
-    # إعلام المستخدم
     context.bot.send_message(
         user_id,
         f"✅ تم إضافة رصيد إلى حسابك!\n\n"
@@ -1233,7 +1156,6 @@ def admin_handle_transfer_amount(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_send_notification(update: Update, context: CallbackContext):
-    """إرسال إشعار"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال الرسالة التي تريد إرسالها لجميع المستخدمين:"
@@ -1241,7 +1163,6 @@ def admin_send_notification(update: Update, context: CallbackContext):
     return ADMIN_SEND_NOTIFICATION
 
 def admin_handle_notification(update: Update, context: CallbackContext):
-    """معالجة الإشعار"""
     message = update.message.text
     users = cursor.execute('SELECT user_id FROM users').fetchall()
     
@@ -1267,7 +1188,6 @@ def admin_handle_notification(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_add_admin(update: Update, context: CallbackContext):
-    """إضافة أدمن"""
     query = update.callback_query
     query.edit_message_text(
         "الرجاء إرسال معرف المستخدم (user ID) الذي تريد ترقيته إلى أدمن:"
@@ -1275,7 +1195,6 @@ def admin_add_admin(update: Update, context: CallbackContext):
     return ADMIN_ADD_ADMIN
 
 def admin_handle_new_admin(update: Update, context: CallbackContext):
-    """معالجة إضافة أدمن جديد"""
     admin_id_text = update.message.text
     try:
         admin_id = int(admin_id_text)
@@ -1283,14 +1202,12 @@ def admin_handle_new_admin(update: Update, context: CallbackContext):
         update.message.reply_text("الرجاء إدخال معرف مستخدم صحيح (أرقام فقط)")
         return ADMIN_ADD_ADMIN
     
-    # التحقق من عدم وجود المستخدم بالفعل كأدمن
     cursor.execute('SELECT * FROM admins WHERE admin_id = ?', (admin_id,))
     if cursor.fetchone():
         update.message.reply_text("هذا المستخدم مسجل بالفعل كأدمن!")
         show_admin_menu(update, context)
         return ADMIN_MAIN
     
-    # الحصول على معلومات المستخدم
     try:
         user = context.bot.get_chat(admin_id)
         username = user.username if user.username else "لا يوجد"
@@ -1299,7 +1216,6 @@ def admin_handle_new_admin(update: Update, context: CallbackContext):
         update.message.reply_text("حدث خطأ أثناء جلب معلومات المستخدم. الرجاء التأكد من المعرف.")
         return ADMIN_ADD_ADMIN
     
-    # إضافة الأدمن الجديد
     adding_admin = update.effective_user.id
     cursor.execute('''
     INSERT INTO admins (admin_id, username, added_by, add_date)
@@ -1308,7 +1224,6 @@ def admin_handle_new_admin(update: Update, context: CallbackContext):
     
     conn.commit()
     
-    # إعلام الأدمن الجديد
     try:
         context.bot.send_message(
             admin_id,
@@ -1325,7 +1240,6 @@ def admin_handle_new_admin(update: Update, context: CallbackContext):
     return ADMIN_MAIN
 
 def admin_view_users(update: Update, context: CallbackContext):
-    """عرض المستخدمين"""
     users = cursor.execute('''
     SELECT user_id, username, first_name, last_name, balance, total_spent, join_date
     FROM users
@@ -1351,21 +1265,18 @@ def admin_view_users(update: Update, context: CallbackContext):
     update.callback_query.edit_message_text(message[:4000])
 
 def back_to_main(update: Update, context: CallbackContext):
-    """العودة للقائمة الرئيسية"""
     query = update.callback_query
     show_main_menu(update)
     query.answer()
     return SELECTING_ACTION
 
 def back_to_categories(update: Update, context: CallbackContext):
-    """العودة للأقسام"""
     query = update.callback_query
     show_main_menu(update)
     query.answer()
     return SELECTING_ACTION
 
 def back_to_games(update: Update, context: CallbackContext):
-    """العودة للألعاب"""
     query = update.callback_query
     category_id = context.user_data.get('selected_category')
     show_category_games(update, context, category_id)
@@ -1373,25 +1284,26 @@ def back_to_games(update: Update, context: CallbackContext):
     return SELECTING_GAME
 
 def back_to_admin(update: Update, context: CallbackContext):
-    """العودة لقائمة الإدارة"""
     query = update.callback_query
     show_admin_menu(update, context)
     query.answer()
     return ADMIN_MAIN
 
 def back_to_edit_category(update: Update, context: CallbackContext):
-    """العودة لتعديل الأقسام"""
     query = update.callback_query
     admin_edit_category(update, context)
     query.answer()
     return ADMIN_EDIT_CATEGORY
 
 def error(update: Update, context: CallbackContext):
-    """معالجة الأخطاء"""
     logger.warning(f'Update "{update}" caused error "{context.error}"')
 
 def main():
-    """الدالة الرئيسية لتشغيل البوت"""
+    TOKEN = os.environ.get('TOKEN')
+    if not TOKEN:
+        logger.error("لم يتم تعيين توكن البوت!")
+        return
+
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
@@ -1510,6 +1422,7 @@ def main():
     dp.add_error_handler(error)
 
     updater.start_polling()
+    logger.info("Bot started successfully")
     updater.idle()
 
 if __name__ == '__main__':
